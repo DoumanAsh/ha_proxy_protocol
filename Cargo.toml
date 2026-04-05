@@ -1,0 +1,16 @@
+[package]
+name = "ha_proxy_protocol"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91"
+description = "HAProxy protocol implementation"
+readme = "README.md"
+repository = "https://github.com/DoumanAsh/ha_proxy_protocol"
+license = "BSL-1.0"
+keywords = ["haproxy", "proxy_protocol"]
+categories = ["network-programming"]
+include = [
+    "**/*.rs",
+    "Cargo.toml",
+    "README.md"
+]
