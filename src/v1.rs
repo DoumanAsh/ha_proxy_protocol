@@ -1,12 +1,35 @@
+//! Version 1 protocol definition
+//!
+//! This protocol defined as text prefixed with `PROXY`
+
 use core::net;
-use crate::{Proxy, Addr, ProxyParseResult};
 use crate::error::ParseError;
 use crate::utils::unlikely;
 
 const SIG: [u8; 6] = *b"PROXY ";
 const LINE_ENDING: [u8; 2] = *b"\r\n";
 
-pub fn parse_proxy(buf: &[u8]) -> Result<ProxyParseResult, ParseError> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///Proxy protocol descriptor
+pub struct Proxy {
+    ///Source address
+    pub src: net::SocketAddr,
+    ///Destination address
+    pub dst: net::SocketAddr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///Result of [Proxy] parsing containing number of bytes consumed
+pub struct ProxyParseResult {
+    ///Proxy information extraction
+    ///
+    ///If address type is UNKNOWN, then [Proxy] `info` will be `None`
+    pub info: Option<Proxy>,
+    ///Number of bytes consumed
+    pub len: usize,
+}
+
+fn parse_proxy(buf: &[u8]) -> Result<ProxyParseResult, ParseError> {
     let (len, buf) = match buf.windows(2).position(|buf: &[u8]| *buf == LINE_ENDING) {
         Some(line_len) => (line_len + LINE_ENDING.len(), &buf[..line_len]),
         None => return Err(ParseError::Incomplete),
@@ -39,14 +62,14 @@ pub fn parse_proxy(buf: &[u8]) -> Result<ProxyParseResult, ParseError> {
             //Even if it is UNKNOWN, make sure no one supplised something weird, just in case
             for _ in 0..4 {
                 if proxy_line_parts.next().is_none() {
-                    return Ok(ProxyParseResult::new_v1(info, len))
+                    return Ok(ProxyParseResult { info, len })
                 }
             }
 
             if let Some(_part) = proxy_line_parts.next() {
                 return Err(unlikely(ParseError::InvalidProxy1Overflow));
             } else {
-                return Ok(ProxyParseResult::new_v1(info, len))
+                return Ok(ProxyParseResult { info, len })
             }
         },
         _ => return Err(ParseError::InvalidTransport),
@@ -60,14 +83,14 @@ pub fn parse_proxy(buf: &[u8]) -> Result<ProxyParseResult, ParseError> {
         return Err(unlikely(ParseError::InvalidProxy1Overflow));
     }
 
-    let src = Addr::Inet(net::SocketAddr::new(src_ip, src_port));
-    let dst = Addr::Inet(net::SocketAddr::new(dst_ip, dst_port));
+    let src = net::SocketAddr::new(src_ip, src_port);
+    let dst = net::SocketAddr::new(dst_ip, dst_port);
 
     let info = Some(Proxy {
         src,
         dst,
     });
-    Ok(ProxyParseResult::new_v1(info, len))
+    return Ok(ProxyParseResult { info, len })
 }
 
 #[inline]

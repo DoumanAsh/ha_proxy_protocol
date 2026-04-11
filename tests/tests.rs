@@ -1,13 +1,13 @@
 use core::net;
 
-use ha_proxy_protocol::{parse, parse_v1};
-use ha_proxy_protocol::{Addr, UnixAddr, Proxy, ParseError, ProxyVersion, TransportProtocol};
+use ha_proxy_protocol::{v1, v2, parse};
+use ha_proxy_protocol::{UnixAddr, ParseError, ProxyParseResult};
 
-fn create_v4_addr(a: u8, b: u8, c: u8, d: u8, port: u16) -> Addr {
+fn create_v4_addr(a: u8, b: u8, c: u8, d: u8, port: u16) -> net::SocketAddr {
     net::SocketAddrV4::new(net::Ipv4Addr::new(a, b, c, d), port).into()
 }
 
-fn create_v6_addr(text: &str, port: u16) -> Addr {
+fn create_v6_addr(text: &str, port: u16) -> net::SocketAddr {
     net::SocketAddrV6::new(text.parse().unwrap(), port, 0, 0).into()
 }
 
@@ -23,10 +23,10 @@ fn should_verify_unix_addr() {
 #[test]
 fn should_parse_valid_version1() {
     let inputs = [
-        ("PROXY TCP4 255.255.255.255 255.255.255.255 65535 65535\r\n", Proxy { src: create_v4_addr(255, 255, 255, 255, 65535), dst: create_v4_addr(255, 255, 255, 255, 65535)  }),
-        ("PROXY TCP4 127.0.0.1 255.255.255.255 80 65535\r\n", Proxy { src: create_v4_addr(127, 0, 0, 1, 80), dst: create_v4_addr(255, 255, 255, 255, 65535)  }),
-        ("PROXY TCP6 ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff 65535 65535\r\n", Proxy { src: create_v6_addr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 65535), dst: create_v6_addr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 65535)  }),
-        ("PROXY TCP6 ::1 ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff 80 65535\r\n", Proxy { src: create_v6_addr("::1", 80), dst: create_v6_addr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 65535)  }),
+        ("PROXY TCP4 255.255.255.255 255.255.255.255 65535 65535\r\n", v1::Proxy { src: create_v4_addr(255, 255, 255, 255, 65535), dst: create_v4_addr(255, 255, 255, 255, 65535)  }),
+        ("PROXY TCP4 127.0.0.1 255.255.255.255 80 65535\r\n", v1::Proxy { src: create_v4_addr(127, 0, 0, 1, 80), dst: create_v4_addr(255, 255, 255, 255, 65535)  }),
+        ("PROXY TCP6 ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff 65535 65535\r\n", v1::Proxy { src: create_v6_addr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 65535), dst: create_v6_addr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 65535)  }),
+        ("PROXY TCP6 ::1 ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff 80 65535\r\n", v1::Proxy { src: create_v6_addr("::1", 80), dst: create_v6_addr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 65535)  }),
     ];
 
     for (input, expected_info) in inputs {
@@ -34,10 +34,13 @@ fn should_parse_valid_version1() {
             Ok(result) => result,
             Err(error) => panic!("Should parse '{input:?}' but got error: {error}"),
         };
+        let result = match result {
+            ProxyParseResult::V1(result) => result,
+            unexpected => panic!("expected v1 but got {unexpected:#?}"),
+        };
         assert_eq!(result.len, input.len());
         let info = result.info.unwrap();
         assert_eq!(result.info.unwrap(), expected_info, "Expected {expected_info:#?} but got {info:#?}");
-        assert_eq!(result.version, ProxyVersion::V1);
     }
 }
 
@@ -57,10 +60,14 @@ fn should_parse_unknown_version1() {
             Ok(result) => result,
             Err(error) => panic!("Should parse '{input:?}' but got error: {error}"),
         };
+        let result = match result {
+            ProxyParseResult::V1(result) => result,
+            unexpected => panic!("expected v1 but got {unexpected:#?}"),
+        };
+
         assert_eq!(result.len, input.len());
         let info = result.info;
         assert!(info.is_none(), "info should be None but got {info:#?}");
-        assert_eq!(result.version, ProxyVersion::V1);
     }
 }
 
@@ -93,7 +100,7 @@ fn should_handle_error_version1() {
     ];
 
     for (input, expected_error) in inputs {
-        match parse_v1(input.as_bytes()) {
+        match v1::parse(input.as_bytes()) {
             Ok(result) => panic!("Should not parse {input:?}, but successfully got {result:?}"),
             Err(error) => assert_eq!(error, expected_error, "{input:?} should return {expected_error} but got {error}"),
         };
@@ -155,11 +162,12 @@ fn should_parse_valid_version2() {
     unix_datagram[13] += 1;
 
     let inputs = [
-        (tcp4.as_slice(), TransportProtocol::Stream, Proxy { src: create_v4_addr(255, 255, 255, 255, 443), dst: create_v4_addr(127, 0, 0, 1, 65535)  }),
-        (udp4.as_slice(), TransportProtocol::Datagram, Proxy { src: create_v4_addr(255, 255, 255, 255, 443), dst: create_v4_addr(127, 0, 0, 1, 65535)  }),
-        (tcp6.as_slice(), TransportProtocol::Stream, Proxy { src: create_v6_addr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 443), dst: create_v6_addr("::1", 65535)  }),
-        (udp6.as_slice(), TransportProtocol::Datagram, Proxy { src: create_v6_addr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 443), dst: create_v6_addr("::1", 65535)  }),
-        (unix_stream.as_slice(), TransportProtocol::Stream, Proxy { src: src_path.into(), dst: dst_path.into()  }),
+        (tcp4.as_slice(), v2::TransportProtocol::Stream, v2::Proxy { src: create_v4_addr(255, 255, 255, 255, 443).into(), dst: create_v4_addr(127, 0, 0, 1, 65535).into() }),
+        (udp4.as_slice(), v2::TransportProtocol::Datagram, v2::Proxy { src: create_v4_addr(255, 255, 255, 255, 443).into(), dst: create_v4_addr(127, 0, 0, 1, 65535).into()  }),
+        (tcp6.as_slice(), v2::TransportProtocol::Stream, v2::Proxy { src: create_v6_addr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 443).into(), dst: create_v6_addr("::1", 65535).into() }),
+        (udp6.as_slice(), v2::TransportProtocol::Datagram, v2::Proxy { src: create_v6_addr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 443).into(), dst: create_v6_addr("::1", 65535).into() }),
+        (unix_stream.as_slice(), v2::TransportProtocol::Stream, v2::Proxy { src: src_path.into(), dst: dst_path.into()  }),
+        (unix_datagram.as_slice(), v2::TransportProtocol::Datagram, v2::Proxy { src: src_path.into(), dst: dst_path.into()  }),
     ];
 
     for (input, expected_transport, expected_info) in inputs {
@@ -167,12 +175,12 @@ fn should_parse_valid_version2() {
             Ok(result) => result,
             Err(error) => panic!("Should parse '{input:?}' but got error: {error}"),
         };
-        match result.version {
-            ProxyVersion::V2 { transport } => {
-                assert_eq!(transport, expected_transport, "{input:?}: Unexpected transport");
-            },
-            unexpected_version => panic!("{input:?}: Expected v2 but got {unexpected_version:?}"),
-        }
+        let result = match result {
+            ProxyParseResult::V2(result) => result,
+            unexpected => panic!("expected v2 but got {unexpected:#?}"),
+        };
+
+        assert_eq!(result.protocol, expected_transport, "{input:?}: Unexpected transport");
         assert_eq!(result.len, input.len());
         let info = result.info.unwrap();
         assert_eq!(result.info.unwrap(), expected_info, "Expected {expected_info:#?} but got {info:#?}");

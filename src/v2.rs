@@ -1,11 +1,62 @@
+//! Version 2 protocol definition
+//!
+//! This protocol defined as binary prefixed with `[0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A]`
+
 use core::{mem, net};
-use crate::{Proxy, UnixAddr, ProxyParseResult, TransportProtocol};
+
+use crate::v1;
+use crate::{Addr, UnixAddr};
 use crate::error::ParseError;
 use crate::utils::{unlikely, get_aligned_chunk_ref};
 
 const SIG: [u8; 12] = [0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A];
 
-pub fn parse_proxy(buf: &[u8]) -> Result<ProxyParseResult, ParseError> {
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///Possible transport protocols
+pub enum TransportProtocol {
+    ///Unknown, only the case for LOCAL proxy
+    Unknown,
+    ///Streaming based transports like TCP
+    Stream,
+    ///Datagram based transports like UDP
+    Datagram,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///Proxy protocol descriptor
+pub struct Proxy {
+    ///Source address
+    pub src: Addr,
+    ///Destination address
+    pub dst: Addr,
+}
+
+impl From<v1::Proxy> for Proxy {
+    #[inline(always)]
+    fn from(value: v1::Proxy) -> Self {
+        let v1::Proxy { src, dst } = value;
+        Self {
+            src: Addr::Inet(src),
+            dst: Addr::Inet(dst),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///Result of [Proxy] parsing containing number of bytes consumed
+pub struct ProxyParseResult {
+    ///Transport protocol indicated by the proxy.
+    pub protocol: TransportProtocol,
+    ///Proxy information extraction
+    ///
+    ///If address type is UNKNOWN, then [Proxy] `info` will be `None`
+    pub info: Option<Proxy>,
+    ///Number of bytes consumed
+    pub len: usize,
+}
+
+fn parse_proxy(buf: &[u8]) -> Result<ProxyParseResult, ParseError> {
     //command + family + len(2)
     const HEADER_LEN: usize = 4;
 
@@ -92,55 +143,67 @@ pub fn parse_proxy(buf: &[u8]) -> Result<ProxyParseResult, ParseError> {
         _ => return Err(unlikely(ParseError::Incomplete)),
     };
     //The 14th byte contains the transport protocol and address family. The highest 4 bits contain the address family, the lowest 4 bits contain the protocol.
-    match buf.get(1) {
+    let (protocol, info, len) = match buf.get(1) {
         //Unspec (only LOCAL is allowed to use it)
+        //We inspect no data inside as it is not supposed to be sent
         Some(0) => if command == 0 {
             let payload = get_payload(buf)?;
-            Ok(ProxyParseResult::new_v2(TransportProtocol::Unknown, None, payload.len() + HEADER_LEN))
+            return Ok(ProxyParseResult {
+                protocol: TransportProtocol::Unknown,
+                info: None,
+                len: payload.len() + HEADER_LEN
+            });
         } else {
-            Err(unlikely(ParseError::InvalidProxy2WrongLocalCmd))
+            return Err(unlikely(ParseError::InvalidProxy2WrongLocalCmd))
         },
         //TCP IPv4
         Some(0x11) => {
             let payload = get_payload(buf)?;
             let (info, extracted_len) = extract_proxy_info_v4(payload);
-            Ok(ProxyParseResult::new_v2(TransportProtocol::Stream, Some(info), payload.len() + HEADER_LEN))
+            (TransportProtocol::Stream, Some(info), payload.len())
         },
         //UDP IPv4
         Some(0x12) => {
             let payload = get_payload(buf)?;
             let (info, extracted_len) = extract_proxy_info_v4(payload);
-            Ok(ProxyParseResult::new_v2(TransportProtocol::Datagram, Some(info), payload.len() + HEADER_LEN))
+            (TransportProtocol::Datagram, Some(info), payload.len())
         },
 
         //TCP IPv6
         Some(0x21) => {
             let payload = get_payload(buf)?;
             let (info, extracted_len) = extract_proxy_info_v6(payload);
-            Ok(ProxyParseResult::new_v2(TransportProtocol::Stream, Some(info), payload.len() + HEADER_LEN))
+            (TransportProtocol::Stream, Some(info), payload.len())
         },
         //UDP IPv6
         Some(0x22) => {
             let payload = get_payload(buf)?;
             let (info, extracted_len) = extract_proxy_info_v6(payload);
-            Ok(ProxyParseResult::new_v2(TransportProtocol::Datagram, Some(info), payload.len() + HEADER_LEN))
+            (TransportProtocol::Datagram, Some(info), payload.len())
         },
 
         //Unix stream
         Some(0x31) => {
             let payload = get_payload(buf)?;
             let (info, extracted_len) = extract_proxy_info_unix(payload);
-            Ok(ProxyParseResult::new_v2(TransportProtocol::Stream, Some(info), payload.len() + HEADER_LEN))
+            (TransportProtocol::Stream, Some(info), payload.len())
         },
         //Unix datagram
         Some(0x32) => {
             let payload = get_payload(buf)?;
             let (info, extracted_len) = extract_proxy_info_unix(payload);
-            Ok(ProxyParseResult::new_v2(TransportProtocol::Datagram, Some(info), payload.len() + HEADER_LEN))
+            (TransportProtocol::Datagram, Some(info), payload.len())
         },
-        Some(_) => Err(ParseError::InvalidTransport),
-        None => Err(unlikely(ParseError::Incomplete)),
-    }
+
+        Some(_) => return Err(ParseError::InvalidTransport),
+        None => return Err(unlikely(ParseError::Incomplete)),
+    };
+
+    Ok(ProxyParseResult {
+        protocol,
+        info,
+        len: len + HEADER_LEN
+    })
 }
 
 #[inline]

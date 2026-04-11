@@ -10,10 +10,8 @@ use core::net::{self, SocketAddr};
 mod utils;
 mod error;
 pub use error::ParseError;
-mod v1;
-pub use v1::parse as parse_v1;
-mod v2;
-pub use v2::parse as parse_v2;
+pub mod v1;
+pub mod v2;
 
 #[derive(Copy, Clone, Eq)]
 ///Unix socket address
@@ -114,7 +112,7 @@ impl fmt::Display for UnixAddr {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-///Proxy Address
+///Generic proxy Address
 pub enum Addr {
     ///Network address
     Inet(SocketAddr),
@@ -199,94 +197,31 @@ impl PartialEq<net::SocketAddrV6> for Addr {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-///Proxy protocol descriptor
-pub struct Proxy {
-    ///Source address
-    pub src: Addr,
-    ///Destination address
-    pub dst: Addr,
-}
-
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-///Possible transport protocols
-pub enum TransportProtocol {
-    ///Unknown, only the case for LOCAL proxy
-    Unknown,
-    ///Streaming based transports like TCP
-    Stream,
-    ///Datagram based transports like UDP
-    Datagram,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-///Possible protocol versions
-pub enum ProxyVersion {
-    ///Textual version prefixed with `PROXY`
-    V1,
-    ///Binary version prefixed with bytes `[0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A]`
-    V2 {
-        ///Transport protocol specified in the version 2
-        transport: TransportProtocol
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-///Result of [Proxy] parsing containing number of bytes consumed
-pub struct ProxyParseResult {
-    ///Version of the proxy protocol
-    pub version: ProxyVersion,
-    ///Proxy information extraction
-    ///
-    ///If address type is UNKNOWN, then [Proxy] `info` will be `None`
-    pub info: Option<Proxy>,
-    ///Number of bytes consumed
-    pub len: usize,
+///Result of proxy parsing enumerating possible versions
+pub enum ProxyParseResult {
+    ///[v1] result
+    V1(v1::ProxyParseResult),
+    ///[v2] result
+    V2(v2::ProxyParseResult),
 }
 
 impl ProxyParseResult {
-    #[inline]
-    ///Creates proxy protocol version 1
-    pub const fn new_v1(info: Option<Proxy>, len: usize) -> Self {
-        Self {
-            version: ProxyVersion::V1,
-            info,
-            len
-        }
-    }
-
-    #[inline]
-    ///Creates proxy protocol version 1
-    pub const fn new_v2(transport: TransportProtocol, info: Option<Proxy>, len: usize) -> Self {
-        Self {
-            version: ProxyVersion::V2 {
-                transport
-            },
-            info,
-            len
-        }
-    }
-
     #[inline(always)]
-    ///Returns whether proxy protocol was version 1
-    pub const fn is_v1(&self) -> bool {
-        matches!(self.version, ProxyVersion::V1)
-    }
-
-    #[inline(always)]
-    ///Returns whether proxy protocol was version 2
-    pub const fn is_v2(&self) -> bool {
-        matches!(self.version, ProxyVersion::V2 { .. })
+    ///Extract proxy parsing result into generic result
+    pub fn into_generic(self) -> (Option<v2::Proxy>, usize) {
+        match self {
+            Self::V1(result) => (result.info.map(Into::into), result.len),
+            Self::V2(result) => (result.info, result.len),
+        }
     }
 }
 
 #[inline(always)]
 ///Parses proxy protocol in `buf` returning result if `buf` content matches any known protocol version
 pub fn parse(buf: &[u8]) -> Result<ProxyParseResult, ParseError> {
-    //Chain v2 in case of ParseError::InvalidProxySig
-    match parse_v1(buf) {
-        Ok(result) => Ok(result),
-        Err(ParseError::InvalidProxySig) => parse_v2(buf),
+    match v1::parse(buf) {
+        Ok(result) => Ok(ProxyParseResult::V1(result)),
+        Err(ParseError::InvalidProxySig) => v2::parse(buf).map(ProxyParseResult::V2),
         Err(error) => Err(error)
     }
 }
