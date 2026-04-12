@@ -11,9 +11,9 @@ pub struct SslClient(pub u8);
 
 impl SslClient {
     #[inline(always)]
-    ///Get bit by index.
-    pub const fn get(&self, idx: u32) -> bool {
-        self.0.wrapping_shr(idx) & 1 != 0
+    ///Checks if `bit` is set
+    pub const fn get(&self, bit: u8) -> bool {
+        self.0 & bit != 0
     }
 
     ///Indicates client connected over SSL/TLS
@@ -40,13 +40,108 @@ impl SslClient {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 ///SSL information within TLV
-pub struct TlvSsl<'a> {
-    ///Bit field describing [TlvSsl] content
+pub struct TlvSslInfo<'a> {
+    ///Bit field describing [TlvSslInfo] content
     pub client: SslClient,
     ///Indicates whether client presented certificate and successfully verified it
     pub is_verified: bool,
-    ///Raw TLV within [TlvSsl]
+    ///Raw TLV within [TlvSslInfo]
     pub payload: &'a [u8]
+}
+
+impl<'a> TlvSslInfo<'a> {
+    #[inline(always)]
+    ///Creates iterator [TlvSslIter]
+    pub const fn iter(&self) -> TlvSslIter<'a> {
+        TlvSslIter::new(self)
+    }
+}
+
+impl<'a> IntoIterator for TlvSslInfo<'a> {
+    type Item = Result<TlvSsl<'a>, TlvError>;
+    type IntoIter = TlvSslIter<'a>;
+    #[inline(always)]
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+///TLV value within [TlvSslInfo]
+pub enum TlvSsl<'a> {
+    ///Reference to byte string within buffer with SSL version identifier
+    Version(BufSlice<'a>),
+    ///Reference to byte string within buffer with CN identifier
+    Cn(BufSlice<'a>),
+    ///Reference to byte string within buffer with Cipher identifier
+    Cipher(BufSlice<'a>),
+    ///Reference to byte string within buffer with Algorithm identifier used to sign client's certificate
+    SigAlg(BufSlice<'a>),
+    ///Reference to byte string within buffer with Algorithm identifier used to generate key of client's certificate
+    KeyALg(BufSlice<'a>),
+    ///Reference to byte string within buffer with Key Exchange Algorithm identifier used to establish client's connection
+    Group(BufSlice<'a>),
+    ///Reference to byte string within buffer with Algorithm identifier used to sign ServerKeyExchange or CertificateVerify message
+    SigSheme(BufSlice<'a>),
+    ///Reference to DER encoded client's certificate
+    ClientCert(&'a [u8]),
+}
+
+///Iterator over [TlvSslInfo] payload
+pub struct TlvSslIter<'a> {
+    buf: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> TlvSslIter<'a> {
+    #[inline(always)]
+    ///Creates iterator instance out of [TlvSslInfo]
+    pub const fn new(tlv_ssl: &TlvSslInfo<'a>) -> Self {
+        Self {
+            buf: tlv_ssl.payload,
+            offset: 0,
+        }
+    }
+}
+
+impl<'a> Iterator for TlvSslIter<'a> {
+    type Item = Result<TlvSsl<'a>, TlvError>;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.buf.len() > self.offset {
+            //TLV always have 3 bytes for type + length
+            let tlv_header = match try_get_aligned_chunk_ref::<[u8; 3]>(self.buf, self.offset) {
+                Some(header) => header,
+                None => return Some(Err(unlikely(TlvError::new_malformed(self.offset))))
+            };
+
+            let tlv_type = tlv_header[0];
+            let tlv_length = u16::from_be_bytes([tlv_header[1], tlv_header[2]]);
+
+            let tlv_value_offset = self.offset + tlv_header.len();
+            let tlv_value = match self.buf.get(tlv_value_offset..tlv_value_offset+tlv_length as usize) {
+                Some(value) => value,
+                None => return Some(Err(unlikely(TlvError::new_malformed(self.offset))))
+            };
+
+            self.offset = tlv_value_offset + tlv_value.len();
+
+            match tlv_type {
+                0x21 => return Some(Ok(TlvSsl::Version(BufSlice(tlv_value)))),
+                0x22 => return Some(Ok(TlvSsl::Cn(BufSlice(tlv_value)))),
+                0x23 => return Some(Ok(TlvSsl::Cipher(BufSlice(tlv_value)))),
+                0x24 => return Some(Ok(TlvSsl::SigAlg(BufSlice(tlv_value)))),
+                0x25 => return Some(Ok(TlvSsl::KeyALg(BufSlice(tlv_value)))),
+                0x26 => return Some(Ok(TlvSsl::Group(BufSlice(tlv_value)))),
+                0x27 => return Some(Ok(TlvSsl::SigSheme(BufSlice(tlv_value)))),
+                0x28 => return Some(Ok(TlvSsl::ClientCert(tlv_value))),
+                _ => continue
+            }
+        }
+
+        None
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -117,7 +212,7 @@ pub enum Tlv<'a> {
     ///Reference to unique identifier as arbitrary bytes up to 128 in length
     UniqueId(&'a [u8]),
     ///SSL information associated with the connection
-    Ssl(TlvSsl<'a>),
+    Ssl(TlvSslInfo<'a>),
     ///Reference to byte string within buffer with network namespace
     Netns(BufSlice<'a>),
 }
@@ -202,13 +297,9 @@ impl<'a> Iterator for TlvsIter<'a> {
 
             match tlv_type {
                 //PP2_TYPE_ALPN
-                0x01 => {
-                    return Some(Ok(Tlv::Alpn(BufSlice(tlv_value))));
-                },
+                0x01 => return Some(Ok(Tlv::Alpn(BufSlice(tlv_value)))),
                 //PP2_TYPE_AUTHORITY
-                0x02 => {
-                    return Some(Ok(Tlv::Authority(BufSlice(tlv_value))));
-                },
+                0x02 => return Some(Ok(Tlv::Authority(BufSlice(tlv_value)))),
                 //PP2_TYPE_CRC32C
                 0x03 => {
                     if tlv_value.len() != 4 {
@@ -241,7 +332,7 @@ impl<'a> Iterator for TlvsIter<'a> {
                     } else {
                         let client: SslClient = *get_aligned_chunk_ref(tlv_value, 0);
                         let verify = u32::from_be_bytes(*get_aligned_chunk_ref(tlv_value, mem::size_of_val(&client)));
-                        return Some(Ok(Tlv::Ssl(TlvSsl {
+                        return Some(Ok(Tlv::Ssl(TlvSslInfo {
                             client,
                             is_verified: verify == 0,
                             payload: &tlv_value[5..],
@@ -250,9 +341,7 @@ impl<'a> Iterator for TlvsIter<'a> {
                 },
 
                 //PP2_TYPE_NETNS
-                0x30 => {
-                    return Some(Ok(Tlv::Netns(BufSlice(tlv_value))));
-                },
+                0x30 => return Some(Ok(Tlv::Netns(BufSlice(tlv_value)))),
                 _ => continue,
             }
         } //while payload

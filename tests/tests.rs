@@ -332,6 +332,78 @@ fn should_parse_tlv_netns_version2() {
 }
 
 #[test]
+fn should_parse_tlv_ssl_version2() {
+    let tls_version = "TLSv1.3";
+    let tls_cipher = "ECDHE-RSA-AES128-GCM-SHA256";
+    let tls_sig_alg = "SHA256";
+    let tls_key_alg = "RSA4096";
+    let tls_cn = "hostname.com";
+
+    let verify = 0u32.to_be_bytes();
+    let mut expected_ssl = [
+        0x01 | 0x02,
+        verify[0], verify[1], verify[2], verify[3],
+    ].to_vec();
+
+    let tlvs = [
+        (0x21, tls_version),
+        (0x22, tls_cn),
+        (0x23, tls_cipher),
+        (0x24, tls_sig_alg),
+        (0x25, tls_key_alg),
+    ];
+    for (tlv_type, tlv_value) in tlvs {
+        expected_ssl.push(tlv_type);
+        let len = (tlv_value.len() as u16).to_be_bytes();
+        expected_ssl.extend_from_slice(&len);
+        expected_ssl.extend_from_slice(tlv_value.as_bytes());
+    }
+
+    let input = build_base_proxy_version2(&[(0x04, [0, 0, 0].as_slice()), (0x20, expected_ssl.as_slice())]);
+    let (_, tlv) = v2::parse(&input).expect("to parse");
+    let tlv = tlv.expect("TLS should be present");
+    let mut tlv_iter = tlv.iter();
+    let tlv = tlv_iter.next().unwrap().expect("parse ssl info");
+    let missing = tlv_iter.next();
+    assert!(missing.is_none(), "No more TLV should be after ssl info, but got {missing:?}");
+
+    match tlv {
+        tlv::Tlv::Ssl(info) => {
+            assert!(info.client.is_ssl());
+            assert!(info.client.is_cert_conn());
+            assert!(!info.client.is_cert_session());
+
+            for tlv in info {
+                match tlv.expect("Parse tlv") {
+                    tlv::TlvSsl::Cn(tlv) => {
+                        let tlv = tlv.to_str().expect("CN must be string");
+                        assert_eq!(tlv, tls_cn);
+                    },
+                    tlv::TlvSsl::Version(tlv) => {
+                        let tlv = tlv.to_str().expect("Version must be string");
+                        assert_eq!(tlv, tls_version);
+                    },
+                    tlv::TlvSsl::Cipher(tlv) => {
+                        let tlv = tlv.to_str().expect("Cipher must be string");
+                        assert_eq!(tlv, tls_cipher);
+                    },
+                    tlv::TlvSsl::SigAlg(tlv) => {
+                        let tlv = tlv.to_str().expect("SigAlg must be string");
+                        assert_eq!(tlv, tls_sig_alg);
+                    },
+                    tlv::TlvSsl::KeyALg(tlv) => {
+                        let tlv = tlv.to_str().expect("KeyALg must be string");
+                        assert_eq!(tlv, tls_key_alg);
+                    },
+                    unexpected => panic!("Unexpected SslTlv {unexpected:?}"),
+                }
+            }
+        },
+        unexpected => panic!("Expected SslInfo but got {unexpected:?}"),
+    }
+}
+
+#[test]
 fn should_parse_tlv_noop_version2() {
     let input = build_base_proxy_version2(&[(0x04, [0, 0, 0].as_slice())]);
     let (_, tlv) = v2::parse(&input).expect("to parse");

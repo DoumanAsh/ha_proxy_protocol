@@ -23,3 +23,4 @@ jobs:
     uses: DoumanAsh/douman-ci/.github/workflows/rust.yml@master
     with:
       min-rustc-version: "1.91.0"
+      miri: true
