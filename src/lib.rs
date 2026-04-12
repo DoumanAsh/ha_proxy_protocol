@@ -13,6 +13,7 @@ mod error;
 pub use error::ParseError;
 pub mod v1;
 pub mod v2;
+pub mod tlv;
 
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -171,7 +172,7 @@ pub enum ProxyParseResult<'a> {
     ///[v1] result
     V1(v1::ProxyParseResult),
     ///[v2] result
-    V2(v2::ProxyParseResult, Option<v2::TlvsSlice<'a>>),
+    V2(v2::ProxyParseResult, Option<tlv::TlvsSlice<'a>>),
 }
 
 impl ProxyParseResult<'_> {
