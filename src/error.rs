@@ -33,6 +33,9 @@ pub enum ParseError {
     ///Destination addr is not valid IPv6
     InvalidDstIpv6,
 
+    ///Indicates corrupted TLV payload.
+    MalformedTlv,
+
     ///Unrecognized transport type
     InvalidTransport,
     ///Valid transport type but payload has insufficient data to extract data
@@ -63,6 +66,8 @@ impl fmt::Display for ParseError {
             Self::InvalidDstPort => fmt.write_str("Destination addr has invalid port"),
             Self::InvalidDstIpv4 => fmt.write_str("Destination addr is not valid IPv4"),
             Self::InvalidDstIpv6 => fmt.write_str("Destination addr is not valid IPv6"),
+
+            Self::MalformedTlv => fmt.write_str("Valid proxy version contains malformed TLV payload"),
 
             Self::InvalidTransport => fmt.write_str("Invalid protocol version. Not a valid transport type"),
             Self::InvalidTransportSize => fmt.write_str("Found valid transport type, but cannot extract proxy info due to insufficient payload size"),

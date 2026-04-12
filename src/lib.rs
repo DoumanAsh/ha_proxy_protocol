@@ -8,21 +8,22 @@ use core::{fmt, ptr};
 use core::net::{self, SocketAddr};
 
 mod utils;
+pub use utils::BufSlice;
 mod error;
 pub use error::ParseError;
 pub mod v1;
 pub mod v2;
 
 #[repr(transparent)]
-#[derive(Copy, Clone, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 ///Unix socket address
-pub struct UnixAddr([u8; 108]);
+pub struct UnixAddr(utils::StrBuf<108>);
 
 impl UnixAddr {
     #[inline(always)]
     ///Creates new address from raw bytes
     pub const fn new(addr: [u8; 108]) -> Self {
-        Self(addr)
+        Self(utils::StrBuf::new(addr))
     }
 
     #[inline(always)]
@@ -43,72 +44,39 @@ impl UnixAddr {
     #[inline(always)]
     ///Gets reference to raw buffer
     pub const fn raw(&self) -> &[u8; 108] {
-        &self.0
+        self.0.raw()
     }
 
     #[inline(always)]
     ///Returns address
     pub const fn addr(&self) -> &[u8] {
-        let mut idx = 0;
-
-        while idx < self.0.len() && self.0[idx] != b'\0' {
-            idx += 1
-        }
-
-        unsafe {
-            core::slice::from_raw_parts(self.0.as_ptr(), idx)
-        }
+        self.0.content()
     }
 
     #[inline(always)]
     ///Attempts to interpret path as utf-8 string, returning raw address bytes in case of error
     pub const fn to_str_or(&self) -> Result<&str, &[u8]> {
-        let addr = self.addr();
-        match core::str::from_utf8(self.addr()) {
-            Ok(addr) => Ok(addr),
-            Err(_) => Err(addr),
-        }
+        self.0.to_str_or()
     }
 
     #[inline(always)]
     ///Attempts to interpret path as utf-8 string, returning `None` if addr is not valid string
     pub const fn to_str(&self) -> Option<&str> {
-        match core::str::from_utf8(self.addr()) {
-            Ok(addr) => Some(addr),
-            Err(_) => None,
-        }
-    }
-}
-
-impl PartialEq for UnixAddr {
-    #[inline(always)]
-    fn eq(&self, other: &Self) -> bool {
-        self.addr() == other.addr()
+        self.0.to_str()
     }
 }
 
 impl fmt::Debug for UnixAddr {
     #[inline(always)]
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.to_str_or() {
-            Ok(addr) => fmt::Debug::fmt(addr, fmt),
-            Err(addr) => fmt::Debug::fmt(addr, fmt),
-        }
+        fmt::Debug::fmt(&self.0, fmt)
     }
 }
 
 impl fmt::Display for UnixAddr {
     #[inline(always)]
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.to_str_or() {
-            Ok(addr) => fmt::Display::fmt(addr, fmt),
-            Err(addr) => {
-                for byte in addr {
-                    fmt.write_fmt(format_args!("{:02x}", byte))?;
-                }
-                Ok(())
-            },
-        }
+        fmt::Display::fmt(&self.0, fmt)
     }
 }
 
@@ -199,30 +167,30 @@ impl PartialEq<net::SocketAddrV6> for Addr {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 ///Result of proxy parsing enumerating possible versions
-pub enum ProxyParseResult {
+pub enum ProxyParseResult<'a> {
     ///[v1] result
     V1(v1::ProxyParseResult),
     ///[v2] result
-    V2(v2::ProxyParseResult),
+    V2(v2::ProxyParseResult, Option<v2::TlvsSlice<'a>>),
 }
 
-impl ProxyParseResult {
+impl ProxyParseResult<'_> {
     #[inline(always)]
     ///Extract proxy parsing result into generic result
     pub fn into_generic(self) -> (Option<v2::Proxy>, usize) {
         match self {
             Self::V1(result) => (result.info.map(Into::into), result.len),
-            Self::V2(result) => (result.info, result.len),
+            Self::V2(result, _) => (result.info, result.len),
         }
     }
 }
 
 #[inline(always)]
 ///Parses proxy protocol in `buf` returning result if `buf` content matches any known protocol version
-pub fn parse(buf: &[u8]) -> Result<ProxyParseResult, ParseError> {
+pub fn parse(buf: &[u8]) -> Result<ProxyParseResult<'_>, ParseError> {
     match v1::parse(buf) {
         Ok(result) => Ok(ProxyParseResult::V1(result)),
-        Err(ParseError::InvalidProxySig) => v2::parse(buf).map(ProxyParseResult::V2),
+        Err(ParseError::InvalidProxySig) => v2::parse(buf).map(|(info, tlvs)| ProxyParseResult::V2(info, tlvs)),
         Err(error) => Err(error)
     }
 }

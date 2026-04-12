@@ -176,7 +176,10 @@ fn should_parse_valid_version2() {
             Err(error) => panic!("Should parse '{input:?}' but got error: {error}"),
         };
         let result = match result {
-            ProxyParseResult::V2(result) => result,
+            ProxyParseResult::V2(result, tlvs) => {
+                assert!(tlvs.is_none(), "Should have no TLVS");
+                result
+            },
             unexpected => panic!("expected v2 but got {unexpected:#?}"),
         };
 
