@@ -35,6 +35,8 @@ pub enum ParseError {
 
     ///Unrecognized transport type
     InvalidTransport,
+    ///Valid transport type but payload has insufficient data to extract data
+    InvalidTransportSize,
     ///Proxy protocol has invalid signature
     InvalidProxySig,
     ///Incomplete input
@@ -63,6 +65,7 @@ impl fmt::Display for ParseError {
             Self::InvalidDstIpv6 => fmt.write_str("Destination addr is not valid IPv6"),
 
             Self::InvalidTransport => fmt.write_str("Invalid protocol version. Not a valid transport type"),
+            Self::InvalidTransportSize => fmt.write_str("Found valid transport type, but cannot extract proxy info due to insufficient payload size"),
             Self::InvalidProxySig => fmt.write_str("Not a valid protocol version. Missing header"),
             Self::Incomplete => fmt.write_str("Not enough bytes to read proxy protocol message. Need more bytes"),
         }

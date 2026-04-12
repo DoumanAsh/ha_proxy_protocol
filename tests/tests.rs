@@ -186,3 +186,34 @@ fn should_parse_valid_version2() {
         assert_eq!(result.info.unwrap(), expected_info, "Expected {expected_info:#?} but got {info:#?}");
     }
 }
+
+#[test]
+fn should_parse_invalid_version2() {
+    let wrong_family_v6 = [
+        13, 10, 13, 10, 0, 13, 10, 81, 85, 73, 84, 10,
+        //command + family
+        33, 33,
+        //len
+        0, 12,
+        //src
+        255, 255, 255, 255,
+        //dst
+        127, 0, 0, 1,
+        //src port 443
+        1, 187,
+        //dst port
+        255, 255
+    ];
+
+    let inputs = [
+        (wrong_family_v6.as_slice(), ParseError::InvalidTransportSize)
+    ];
+
+    for (input, expected_error) in inputs {
+        match v2::parse(input) {
+            Ok(result) => panic!("Should fail to parse '{input:?}' but got success: {result:#?}"),
+            Err(error) => assert_eq!(error, expected_error),
+        }
+    }
+}
+

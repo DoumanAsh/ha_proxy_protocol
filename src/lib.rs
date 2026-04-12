@@ -13,6 +13,7 @@ pub use error::ParseError;
 pub mod v1;
 pub mod v2;
 
+#[repr(transparent)]
 #[derive(Copy, Clone, Eq)]
 ///Unix socket address
 pub struct UnixAddr([u8; 108]);
