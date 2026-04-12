@@ -220,8 +220,8 @@ fn should_parse_invalid_version2() {
     }
 }
 
-fn build_base_proxy_version2(tlv_type: u8, tlv_bytes: &[u8]) -> Vec<u8> {
-    let len = 12 + 3 + tlv_bytes.len();
+fn build_base_proxy_version2(tlvs: &[(u8, &[u8])]) -> Vec<u8> {
+    let len =  tlvs.iter().fold(12usize, |acc, (_, value)| acc + 3 + value.len());
     let len_bytes = (len as u16).to_be_bytes();
     let mut out = [
         13u8, 10, 13, 10, 0, 13, 10, 81, 85, 73, 84, 10,
@@ -239,10 +239,12 @@ fn build_base_proxy_version2(tlv_type: u8, tlv_bytes: &[u8]) -> Vec<u8> {
         255, 255
     ].to_vec();
 
-    out.push(tlv_type);
-    let len = tlv_bytes.len() as u16;
-    out.extend_from_slice(&len.to_be_bytes());
-    out.extend_from_slice(tlv_bytes);
+    for (tlv_type, tlv_bytes) in tlvs {
+        out.push(*tlv_type);
+        let len = tlv_bytes.len() as u16;
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(tlv_bytes);
+    }
     out
 }
 
@@ -250,7 +252,7 @@ fn build_base_proxy_version2(tlv_type: u8, tlv_bytes: &[u8]) -> Vec<u8> {
 fn should_parse_tlv_alpn_version2() {
     let expected_alpn = "http/1.1";
 
-    let input = build_base_proxy_version2(0x01, expected_alpn.as_bytes());
+    let input = build_base_proxy_version2(&[(0x04, [0, 0, 0].as_slice()), (0x04, [0, 0, 0].as_slice()), (0x01, expected_alpn.as_bytes())]);
     let (_, tlv) = v2::parse(&input).expect("to parse");
     let tlv = tlv.expect("TLS should be present");
     let mut tlv_iter = tlv.iter();
@@ -271,7 +273,7 @@ fn should_parse_tlv_alpn_version2() {
 fn should_parse_tlv_authority_version2() {
     let expected_authority = "test.com";
 
-    let input = build_base_proxy_version2(0x02, expected_authority.as_bytes());
+    let input = build_base_proxy_version2(&[(0x04, [0, 0, 0].as_slice()), (0x02, expected_authority.as_bytes())]);
     let (_, tlv) = v2::parse(&input).expect("to parse");
     let tlv = tlv.expect("TLS should be present");
     let mut tlv_iter = tlv.iter();
@@ -292,7 +294,7 @@ fn should_parse_tlv_authority_version2() {
 fn should_parse_tlv_unique_id_version2() {
     let expected_unique_id = b"123451234659";
 
-    let input = build_base_proxy_version2(0x05, expected_unique_id.as_slice());
+    let input = build_base_proxy_version2(&[(0x04, [0, 0, 0].as_slice()), (0x05, expected_unique_id.as_slice())]);
     let (_, tlv) = v2::parse(&input).expect("to parse");
     let tlv = tlv.expect("TLS should be present");
     let mut tlv_iter = tlv.iter();
@@ -312,7 +314,7 @@ fn should_parse_tlv_unique_id_version2() {
 fn should_parse_tlv_netns_version2() {
     let expected_netns = "netns/example";
 
-    let input = build_base_proxy_version2(0x30, expected_netns.as_bytes());
+    let input = build_base_proxy_version2(&[(0x04, [0, 0, 0].as_slice()), (0x30, expected_netns.as_bytes())]);
     let (_, tlv) = v2::parse(&input).expect("to parse");
     let tlv = tlv.expect("TLS should be present");
     let mut tlv_iter = tlv.iter();
@@ -331,7 +333,7 @@ fn should_parse_tlv_netns_version2() {
 
 #[test]
 fn should_parse_tlv_noop_version2() {
-    let input = build_base_proxy_version2(0x04, [0, 0, 0].as_slice());
+    let input = build_base_proxy_version2(&[(0x04, [0, 0, 0].as_slice())]);
     let (_, tlv) = v2::parse(&input).expect("to parse");
     let tlv = tlv.expect("TLS should be present");
     let mut tlv_iter = tlv.iter();
