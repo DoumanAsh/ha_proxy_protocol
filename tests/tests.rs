@@ -41,6 +41,8 @@ fn should_parse_valid_version1() {
         assert_eq!(result.len, input.len());
         let info = result.info.unwrap();
         assert_eq!(result.info.unwrap(), expected_info, "Expected {expected_info:#?} but got {info:#?}");
+        //Check fmt without line ending
+        assert_eq!(input[..input.len()-2], expected_info.to_string());
     }
 }
 
@@ -170,6 +172,7 @@ fn should_parse_valid_version2() {
         (unix_datagram.as_slice(), v2::TransportProtocol::Datagram, v2::Proxy { src: src_path.into(), dst: dst_path.into()  }),
     ];
 
+    let mut temp_buf = [0; 256];
     for (input, expected_transport, expected_info) in inputs {
         let result = match parse(input) {
             Ok(result) => result,
@@ -186,7 +189,10 @@ fn should_parse_valid_version2() {
         assert_eq!(result.protocol, expected_transport, "{input:?}: Unexpected transport");
         assert_eq!(result.len, input.len());
         let info = result.info.unwrap();
-        assert_eq!(result.info.unwrap(), expected_info, "Expected {expected_info:#?} but got {info:#?}");
+        assert_eq!(info, expected_info, "Expected {expected_info:#?} but got {info:#?}");
+        let len = info.encode(expected_transport, &mut temp_buf);
+        assert_eq!(result.len, len);
+        assert_eq!(temp_buf[..len], *input, "Encoding should producing equivalent output to input: {expected_transport:?} {expected_info:#?}");
     }
 }
 

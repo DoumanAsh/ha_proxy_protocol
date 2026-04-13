@@ -2,7 +2,7 @@
 //!
 //! This protocol defined as binary prefixed with `[0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A]`
 
-use core::{mem, net};
+use core::{mem, net, ptr};
 
 use crate::{tlv, v1};
 use crate::{Addr, UnixAddr};
@@ -10,6 +10,8 @@ use crate::error::ParseError;
 use crate::utils::{unlikely, get_aligned_chunk_ref};
 
 const SIG: [u8; 12] = [0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A];
+//command + family + len(2)
+const HEADER_LEN: usize = 4;
 
 ///Simple extractor that relies on Self to be directly mapped from bytes
 unsafe trait RawExtractor: Copy + Sized + Into<Addr> {
@@ -93,6 +95,152 @@ pub struct Proxy {
     pub dst: Addr,
 }
 
+impl Proxy {
+    #[inline]
+    ///Returns required buffer size to hold [Proxy] encoded in proxy version 2 without TLV
+    ///
+    ///In debug build it asserts that [Proxy] is constructed correctly (i.e. src and dst are the same type of address)
+    pub const fn required_buffer_size(&self) -> usize {
+        match self.src {
+            Addr::Unix(_) => {
+                debug_assert!(matches!(self.dst, Addr::Unix(_)));
+                232
+            },
+            Addr::Inet(net::SocketAddr::V4(_)) => {
+                debug_assert!(matches!(self.dst, Addr::Inet(net::SocketAddr::V4(_))));
+                28
+            },
+            Addr::Inet(net::SocketAddr::V6(_)) => {
+                debug_assert!(matches!(self.dst, Addr::Inet(net::SocketAddr::V6(_))));
+                57
+            },
+        }
+    }
+
+    ///Attempts to encode [Proxy] into `out` returning number of bytes written.
+    ///
+    ///Returns `0` if `out` buffer has insufficient size
+    pub fn encode_uninit(&self, transport: TransportProtocol, out: &mut [mem::MaybeUninit<u8>]) -> usize {
+        macro_rules! write_signature {
+            ($out:ident) => {
+                unsafe {
+                    ptr::copy_nonoverlapping(SIG.as_ptr(), $out.as_mut_ptr() as _, SIG.len());
+                }
+            };
+        }
+
+        macro_rules! write_header {
+            ($out:ident, $cmd:expr, $family:expr, $len:expr) => {
+                $out[SIG.len()] = mem::MaybeUninit::new($cmd);
+                $out[SIG.len() + 1] = mem::MaybeUninit::new($family);
+                let len_bytes = ($len).to_be_bytes();
+                $out[SIG.len() + 2] = mem::MaybeUninit::new(len_bytes[0]);
+                $out[SIG.len() + 3] = mem::MaybeUninit::new(len_bytes[1]);
+            };
+        }
+
+        macro_rules! write_inet {
+            ($src:expr, $dst:expr) => {
+                let src_ip = $src.ip().octets();
+                let dst_ip = $dst.ip().octets();
+                unsafe {
+                    ptr::copy_nonoverlapping(src_ip.as_ptr(), out.as_mut_ptr().add(SIG.len() + HEADER_LEN) as _, src_ip.len());
+                    ptr::copy_nonoverlapping(dst_ip.as_ptr(), out.as_mut_ptr().add(SIG.len() + HEADER_LEN + src_ip.len()) as _, dst_ip.len());
+                }
+
+                let src_port = $src.port().to_be_bytes();
+                let dst_port = $dst.port().to_be_bytes();
+                unsafe {
+                    ptr::copy_nonoverlapping(src_port.as_ptr(), out.as_mut_ptr().add(SIG.len() + HEADER_LEN + src_ip.len() + dst_ip.len()) as _, src_port.len());
+                    ptr::copy_nonoverlapping(dst_port.as_ptr(), out.as_mut_ptr().add(SIG.len() + HEADER_LEN + src_ip.len() + dst_ip.len() + src_port.len()) as _, dst_port.len());
+                }
+            };
+        }
+        //should be called guarded by length check
+        fn encode_local(out: &mut [mem::MaybeUninit<u8>]) -> usize {
+            write_signature!(out);
+            write_header!(out, 0x20, 0x00, 0x00u16);
+            SIG.len() + HEADER_LEN
+        }
+
+        match (self.src, self.dst) {
+            (Addr::Unix(src), Addr::Unix(dst)) => {
+                let len = 232;
+                if out.len() < len {
+                    0
+                } else {
+                    let family = match transport {
+                        TransportProtocol::Stream => 0x31,
+                        TransportProtocol::Datagram => 0x32,
+                        TransportProtocol::Unknown => return encode_local(out),
+                    };
+
+                    write_signature!(out);
+                    write_header!(out, 0x21, family, (len - SIG.len() - HEADER_LEN) as u16);
+                    unsafe {
+                        ptr::copy_nonoverlapping(src.raw().as_ptr(), out.as_mut_ptr().add(SIG.len() + HEADER_LEN) as _, src.raw().len());
+                        ptr::copy_nonoverlapping(dst.raw().as_ptr(), out.as_mut_ptr().add(SIG.len() + HEADER_LEN + src.raw().len()) as _, dst.raw().len());
+                    }
+                    len
+                }
+            },
+            (Addr::Inet(net::SocketAddr::V4(src)), Addr::Inet(net::SocketAddr::V4(dst))) => {
+                let len = 28;
+                if out.len() < len {
+                    0
+                } else {
+                    let family = match transport {
+                        TransportProtocol::Stream => 0x11,
+                        TransportProtocol::Datagram => 0x12,
+                        TransportProtocol::Unknown => return encode_local(out),
+                    };
+
+                    write_signature!(out);
+                    write_header!(out, 0x21, family, (len - SIG.len() - HEADER_LEN) as u16);
+                    write_inet!(src, dst);
+
+                    len
+                }
+
+            },
+            (Addr::Inet(net::SocketAddr::V6(src)), Addr::Inet(net::SocketAddr::V6(dst))) => {
+                let len = 52;
+                if out.len() < len {
+                    0
+                } else {
+                    let family = match transport {
+                        TransportProtocol::Stream => 0x21,
+                        TransportProtocol::Datagram => 0x22,
+                        TransportProtocol::Unknown => return encode_local(out),
+                    };
+
+                    write_signature!(out);
+                    write_header!(out, 0x21, family, (len - SIG.len() - HEADER_LEN) as u16);
+                    write_inet!(src, dst);
+
+                    len
+                }
+
+            },
+            #[cfg(debug_assertions)]
+            _ => panic!("Mismatch between src and "),
+            #[cfg(not(debug_assertions))]
+            _ => 0,
+        }
+    }
+
+    #[inline]
+    ///Attempts to encode [Proxy] into `out` returning number of bytes written.
+    ///
+    ///Returns `0` if `out` buffer has insufficient size
+    pub fn encode(&self, transport: TransportProtocol, out: &mut [u8]) -> usize {
+        let out = unsafe {
+            core::slice::from_raw_parts_mut(out.as_mut_ptr() as _, out.len())
+        };
+        self.encode_uninit(transport, out)
+    }
+}
+
 impl From<v1::Proxy> for Proxy {
     #[inline(always)]
     fn from(value: v1::Proxy) -> Self {
@@ -119,9 +267,6 @@ pub struct ProxyParseResult {
 }
 
 fn parse_proxy(buf: &[u8]) -> Result<(ProxyParseResult, Option<tlv::TlvsSlice<'_>>), ParseError> {
-    //command + family + len(2)
-    const HEADER_LEN: usize = 4;
-
     //15 + 16 bytes contain length in BE order
     //So use it to extract rest of the payload
     #[inline(always)]

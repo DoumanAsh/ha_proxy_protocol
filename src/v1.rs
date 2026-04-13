@@ -2,15 +2,18 @@
 //!
 //! This protocol defined as text prefixed with `PROXY`
 
-use core::net;
+use core::{fmt, net};
 use crate::error::ParseError;
 use crate::utils::unlikely;
 
+const SIG_PREFIX: &str = "PROXY ";
 const SIG: [u8; 6] = *b"PROXY ";
 const LINE_ENDING: [u8; 2] = *b"\r\n";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 ///Proxy protocol descriptor
+///
+///Its `Display` implementation writes `proxy protocol version 1` without line ending
 pub struct Proxy {
     ///Source address
     pub src: net::SocketAddr,
@@ -18,8 +21,45 @@ pub struct Proxy {
     pub dst: net::SocketAddr,
 }
 
+impl Proxy {
+    ///Returns required buffer size to hold [Proxy] encoded in proxy version 1
+    ///
+    ///In debug build it asserts that [Proxy] is constructed correctly (i.e. src and dst are the same type of address)
+    pub const fn required_buffer_size(&self) -> usize {
+        if self.src.is_ipv4() {
+            debug_assert!(self.dst.is_ipv4());
+            56
+        } else {
+            debug_assert!(self.dst.is_ipv6());
+            104
+        }
+    }
+}
+
+impl fmt::Display for Proxy {
+    #[inline]
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.write_str(SIG_PREFIX)?;
+        let transport = if self.src.is_ipv4() {
+            "TCP4"
+        } else {
+            "TCP6"
+        };
+
+        fmt.write_str(transport)?;
+
+        let src_ip = self.src.ip();
+        let src_port = self.src.port();
+        let dst_ip = self.dst.ip();
+        let dst_port = self.dst.port();
+        fmt.write_fmt(format_args!(" {src_ip} {dst_ip} {src_port} {dst_port}"))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 ///Result of [Proxy] parsing containing number of bytes consumed
+///
+///Its `Display` implementation writes `proxy protocol version 1` without line ending
 pub struct ProxyParseResult {
     ///Proxy information extraction
     ///
@@ -27,6 +67,19 @@ pub struct ProxyParseResult {
     pub info: Option<Proxy>,
     ///Number of bytes consumed
     pub len: usize,
+}
+
+impl fmt::Display for ProxyParseResult {
+    #[inline]
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.info {
+            Some(info) => fmt::Display::fmt(info, fmt),
+            None => {
+                fmt.write_str(SIG_PREFIX)?;
+                fmt.write_str("UNKNOWN")
+            },
+        }
+    }
 }
 
 fn parse_proxy(buf: &[u8]) -> Result<ProxyParseResult, ParseError> {
