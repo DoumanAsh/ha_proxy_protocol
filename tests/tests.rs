@@ -261,10 +261,19 @@ fn should_parse_tlv_alpn_version2() {
     let input = build_base_proxy_version2(&[(0x04, [0, 0, 0].as_slice()), (0x04, [0, 0, 0].as_slice()), (0x01, expected_alpn.as_bytes())]);
     let (_, tlv) = v2::parse(&input).expect("to parse");
     let tlv = tlv.expect("TLS should be present");
+    let tlv_raw = tlv.raw();
     let mut tlv_iter = tlv.iter();
     let alpn = tlv_iter.next().unwrap().expect("parse alpn");
     let missing = tlv_iter.next();
     assert!(missing.is_none(), "No more TLV should be after ALPN, but got {missing:?}");
+
+    assert_eq!(alpn.required_buffer_size(), 3 + expected_alpn.len());
+    let mut insufficient_buffer = [0; 10];
+    let mut encoded_buffer = [0; 256];
+    assert_eq!(alpn.encode(&mut insufficient_buffer), 0);
+    assert_eq!(alpn.encode(&mut encoded_buffer), 11);
+    //skip NOOP
+    assert_eq!(encoded_buffer[..11], tlv_raw[12..]);
 
     match alpn {
         tlv::Tlv::Alpn(bytes) => {
@@ -282,10 +291,19 @@ fn should_parse_tlv_authority_version2() {
     let input = build_base_proxy_version2(&[(0x04, [0, 0, 0].as_slice()), (0x02, expected_authority.as_bytes())]);
     let (_, tlv) = v2::parse(&input).expect("to parse");
     let tlv = tlv.expect("TLS should be present");
+    let tlv_raw = tlv.raw();
     let mut tlv_iter = tlv.iter();
     let tlv = tlv_iter.next().unwrap().expect("parse authority");
     let missing = tlv_iter.next();
     assert!(missing.is_none(), "No more TLV should be after authority, but got {missing:?}");
+
+    assert_eq!(tlv.required_buffer_size(), 3 + expected_authority.len());
+    let mut insufficient_buffer = [0; 10];
+    let mut encoded_buffer = [0; 256];
+    assert_eq!(tlv.encode(&mut insufficient_buffer), 0);
+    assert_eq!(tlv.encode(&mut encoded_buffer), 11);
+    //skip NOOP
+    assert_eq!(encoded_buffer[..11], tlv_raw[6..]);
 
     match tlv {
         tlv::Tlv::Authority(bytes) => {
@@ -303,10 +321,19 @@ fn should_parse_tlv_unique_id_version2() {
     let input = build_base_proxy_version2(&[(0x04, [0, 0, 0].as_slice()), (0x05, expected_unique_id.as_slice())]);
     let (_, tlv) = v2::parse(&input).expect("to parse");
     let tlv = tlv.expect("TLS should be present");
+    let tlv_raw = tlv.raw();
     let mut tlv_iter = tlv.iter();
     let tlv = tlv_iter.next().unwrap().expect("parse unique id");
     let missing = tlv_iter.next();
     assert!(missing.is_none(), "No more TLV should be after unique id, but got {missing:?}");
+
+    assert_eq!(tlv.required_buffer_size(), 3 + expected_unique_id.len());
+    let mut insufficient_buffer = [0; 13];
+    let mut encoded_buffer = [0; 256];
+    assert_eq!(tlv.encode(&mut insufficient_buffer), 0);
+    assert_eq!(tlv.encode(&mut encoded_buffer), 15);
+    //skip NOOP
+    assert_eq!(encoded_buffer[..15], tlv_raw[6..]);
 
     match tlv {
         tlv::Tlv::UniqueId(tlv) => {
@@ -323,10 +350,19 @@ fn should_parse_tlv_netns_version2() {
     let input = build_base_proxy_version2(&[(0x04, [0, 0, 0].as_slice()), (0x30, expected_netns.as_bytes())]);
     let (_, tlv) = v2::parse(&input).expect("to parse");
     let tlv = tlv.expect("TLS should be present");
+    let tlv_raw = tlv.raw();
     let mut tlv_iter = tlv.iter();
     let tlv = tlv_iter.next().unwrap().expect("parse netns");
     let missing = tlv_iter.next();
     assert!(missing.is_none(), "No more TLV should be after netns, but got {missing:?}");
+
+    assert_eq!(tlv.required_buffer_size(), 3 + expected_netns.len());
+    let mut insufficient_buffer = [0; 13];
+    let mut encoded_buffer = [0; 256];
+    assert_eq!(tlv.encode(&mut insufficient_buffer), 0);
+    assert_eq!(tlv.encode(&mut encoded_buffer), 16);
+    //skip NOOP
+    assert_eq!(encoded_buffer[..16], tlv_raw[6..]);
 
     match tlv {
         tlv::Tlv::Netns(bytes) => {
@@ -368,11 +404,25 @@ fn should_parse_tlv_ssl_version2() {
     let input = build_base_proxy_version2(&[(0x04, [0, 0, 0].as_slice()), (0x20, expected_ssl.as_slice())]);
     let (_, tlv) = v2::parse(&input).expect("to parse");
     let tlv = tlv.expect("TLS should be present");
+    let tlv_payload = tlv.raw();
+    assert_eq!(tlv_payload.len(), 88);
     let mut tlv_iter = tlv.iter();
     let tlv = tlv_iter.next().unwrap().expect("parse ssl info");
+    let tlv_len = tlv.required_buffer_size();
     let missing = tlv_iter.next();
     assert!(missing.is_none(), "No more TLV should be after ssl info, but got {missing:?}");
 
+    assert_eq!(expected_ssl.len(), 79);
+    assert_eq!(tlv_len, expected_ssl.len() + 3);
+    let mut insufficient_buffer = [0; 81];
+    let mut sufficient_buffer = [0; 256];
+
+    assert_eq!(tlv.encode(&mut insufficient_buffer), 0);
+    assert_eq!(tlv.encode(&mut sufficient_buffer), 82);
+    //Skip NOOP
+    assert_eq!(sufficient_buffer[..82], tlv_payload[6..]);
+
+    let mut tlv_ssl_payload_len = 0;
     match tlv {
         tlv::Tlv::Ssl(info) => {
             assert!(info.client.is_ssl());
@@ -380,33 +430,50 @@ fn should_parse_tlv_ssl_version2() {
             assert!(!info.client.is_cert_session());
 
             for tlv in info {
-                match tlv.expect("Parse tlv") {
+                let tlv = tlv.expect("Parse tlv");
+                let tlv_len = tlv.required_buffer_size();
+                let buffer_len = match tlv {
                     tlv::TlvSsl::Cn(tlv) => {
+                        let len = tlv.0.len();
                         let tlv = tlv.to_str().expect("CN must be string");
                         assert_eq!(tlv, tls_cn);
+                        len
                     },
                     tlv::TlvSsl::Version(tlv) => {
+                        let len = tlv.0.len();
                         let tlv = tlv.to_str().expect("Version must be string");
                         assert_eq!(tlv, tls_version);
+                        len
                     },
                     tlv::TlvSsl::Cipher(tlv) => {
+                        let len = tlv.0.len();
                         let tlv = tlv.to_str().expect("Cipher must be string");
                         assert_eq!(tlv, tls_cipher);
+                        len
                     },
                     tlv::TlvSsl::SigAlg(tlv) => {
+                        let len = tlv.0.len();
                         let tlv = tlv.to_str().expect("SigAlg must be string");
                         assert_eq!(tlv, tls_sig_alg);
+                        len
                     },
                     tlv::TlvSsl::KeyALg(tlv) => {
+                        let len = tlv.0.len();
                         let tlv = tlv.to_str().expect("KeyALg must be string");
                         assert_eq!(tlv, tls_key_alg);
+                        len
                     },
                     unexpected => panic!("Unexpected SslTlv {unexpected:?}"),
-                }
-            }
+                };
+                tlv_ssl_payload_len += tlv_len;
+                assert_eq!(tlv_len, buffer_len + 3);
+            } //for tlv
         },
         unexpected => panic!("Expected SslInfo but got {unexpected:?}"),
-    }
+    } // match tlv
+
+    // payload + header(3) + SSL sub-tlv header(5)
+    assert_eq!(tlv_len, tlv_ssl_payload_len + 8);
 }
 
 #[test]

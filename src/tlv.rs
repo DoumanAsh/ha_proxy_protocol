@@ -1,8 +1,58 @@
 //!TLV module
-use core::{mem, fmt};
+use core::{mem, fmt, ptr, slice};
 
 use crate::utils::BufSlice;
 use crate::utils::{unlikely, get_aligned_chunk_ref, try_get_aligned_chunk_ref};
+
+type TlvHeader = [u8; 3];
+const TLV_HEADER_LEN: usize = mem::size_of::<TlvHeader>();
+
+///Encodes raw `payload` as TLV value of specified `typ` writing inside `out`, if it can fit.
+///
+///On success returns number of bytes written, otherwise 0, indicating insufficient buffer
+pub const fn encode_uninit(typ: u8, payload: &[&[u8]], out: &mut [mem::MaybeUninit<u8>]) -> usize {
+    let mut required_len = TLV_HEADER_LEN;
+
+    let mut idx = 0;
+    while idx < payload.len() {
+        required_len += payload[idx].len();
+        idx += 1;
+    }
+
+    if out.len() < required_len {
+        return 0;
+    }
+
+    let len_bytes = ((required_len - TLV_HEADER_LEN) as u16).to_be_bytes();
+
+    out[0] = mem::MaybeUninit::new(typ);
+    out[1] = mem::MaybeUninit::new(len_bytes[0]);
+    out[2] = mem::MaybeUninit::new(len_bytes[1]);
+
+    idx = 0;
+    let mut offset = 3;
+    while idx < payload.len() {
+        let payload = payload[idx];
+        unsafe {
+            ptr::copy_nonoverlapping(payload.as_ptr(), out.as_mut_ptr().add(offset) as _, payload.len());
+        }
+        offset += payload.len();
+        idx += 1;
+    }
+
+    required_len
+}
+
+#[inline(always)]
+///Encodes raw `payload` as TLV value of specified `typ` writing inside `out`, if it can fit.
+///
+///On success returns number of bytes written, otherwise 0, indicating insufficient buffer
+pub const fn encode(typ: u8, payload: &[&[u8]], out: &mut [u8]) -> usize {
+    let out = unsafe {
+        slice::from_raw_parts_mut(out.as_mut_ptr() as _, out.len())
+    };
+    encode_uninit(typ, payload, out)
+}
 
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -50,6 +100,7 @@ pub struct TlvSslInfo<'a> {
 }
 
 impl<'a> TlvSslInfo<'a> {
+    const HEADER_LEN: usize = 5;
     #[inline(always)]
     ///Creates iterator [TlvSslIter]
     pub const fn iter(&self) -> TlvSslIter<'a> {
@@ -87,6 +138,50 @@ pub enum TlvSsl<'a> {
     ClientCert(&'a [u8]),
 }
 
+impl TlvSsl<'_> {
+    ///Returns required buffer size to hold [Tlv] encoded in proxy version 2
+    pub const fn required_buffer_size(&self) -> usize {
+        match self {
+            Self::Version(buf) => TLV_HEADER_LEN + buf.0.len(),
+            Self::Cn(buf) => TLV_HEADER_LEN + buf.0.len(),
+            Self::Cipher(buf) => TLV_HEADER_LEN + buf.0.len(),
+            Self::SigAlg(buf) => TLV_HEADER_LEN + buf.0.len(),
+            Self::KeyALg(buf) => TLV_HEADER_LEN + buf.0.len(),
+            Self::Group(buf) => TLV_HEADER_LEN + buf.0.len(),
+            Self::SigSheme(buf) => TLV_HEADER_LEN + buf.0.len(),
+            Self::ClientCert(buf) => TLV_HEADER_LEN + buf.len(),
+        }
+    }
+
+    #[inline(always)]
+    ///Encodes [TlvSsl] as TLV value writing inside `out`, if it can fit.
+    ///
+    ///On success returns number of bytes written, otherwise 0, indicating insufficient buffer
+    pub const fn encode_uninit(&self, out: &mut [mem::MaybeUninit<u8>]) -> usize {
+        match self {
+            Self::Version(buf) => encode_uninit(0x21, &[&buf.0], out),
+            Self::Cn(buf) => encode_uninit(0x22, &[&buf.0], out),
+            Self::Cipher(buf) => encode_uninit(0x23, &[&buf.0], out),
+            Self::SigAlg(buf) => encode_uninit(0x24, &[&buf.0], out),
+            Self::KeyALg(buf) => encode_uninit(0x25, &[&buf.0], out),
+            Self::Group(buf) => encode_uninit(0x26, &[&buf.0], out),
+            Self::SigSheme(buf) => encode_uninit(0x27, &[&buf.0], out),
+            Self::ClientCert(buf) => encode_uninit(0x28, &[buf], out),
+        }
+    }
+
+    #[inline(always)]
+    ///Encodes [TlvSsl] as TLV value writing inside `out`, if it can fit.
+    ///
+    ///On success returns number of bytes written, otherwise 0, indicating insufficient buffer
+    pub const fn encode(&self, out: &mut [u8]) -> usize {
+        let out = unsafe {
+            slice::from_raw_parts_mut(out.as_mut_ptr() as _, out.len())
+        };
+        self.encode_uninit(out)
+    }
+}
+
 ///Iterator over [TlvSslInfo] payload
 pub struct TlvSslIter<'a> {
     buf: &'a [u8],
@@ -111,7 +206,7 @@ impl<'a> Iterator for TlvSslIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         while self.buf.len() > self.offset {
             //TLV always have 3 bytes for type + length
-            let tlv_header = match try_get_aligned_chunk_ref::<[u8; 3]>(self.buf, self.offset) {
+            let tlv_header = match try_get_aligned_chunk_ref::<TlvHeader>(self.buf, self.offset) {
                 Some(header) => header,
                 None => return Some(Err(unlikely(TlvError::new_malformed(self.offset))))
             };
@@ -217,6 +312,50 @@ pub enum Tlv<'a> {
     Netns(BufSlice<'a>),
 }
 
+impl Tlv<'_> {
+    ///Returns required buffer size to hold [Tlv] encoded in proxy version 2
+    pub const fn required_buffer_size(&self) -> usize {
+        match self {
+            Self::Alpn(buf) => TLV_HEADER_LEN + buf.0.len(),
+            Self::Authority(buf) => TLV_HEADER_LEN + buf.0.len(),
+            Self::Crc32c(tlv) => TLV_HEADER_LEN + mem::size_of_val(&tlv.checksum),
+            Self::UniqueId(buf) => TLV_HEADER_LEN + buf.len(),
+            Self::Ssl(ssl) => TLV_HEADER_LEN + ssl.payload.len() + TlvSslInfo::HEADER_LEN,
+            Self::Netns(buf) => TLV_HEADER_LEN + buf.0.len(),
+        }
+    }
+
+    #[inline(always)]
+    ///Encodes [Tlv] as TLV value writing inside `out`, if it can fit.
+    ///
+    ///On success returns number of bytes written, otherwise 0, indicating insufficient buffer
+    pub const fn encode_uninit(&self, out: &mut [mem::MaybeUninit<u8>]) -> usize {
+        match self {
+            Self::Alpn(buf) => encode_uninit(0x01, &[&buf.0], out),
+            Self::Authority(buf) => encode_uninit(0x02, &[&buf.0], out),
+            Self::Crc32c(tlv) => encode_uninit(0x03, &[&tlv.checksum.to_be_bytes()], out),
+            Self::UniqueId(buf) => encode_uninit(0x05, &[buf], out),
+            Self::Ssl(ssl) => {
+                //0 is equal to true
+                let verify = (!ssl.is_verified) as u32;
+                encode_uninit(0x20, &[&[ssl.client.0], &verify.to_be_bytes(), ssl.payload], out)
+            },
+            Self::Netns(buf) => encode_uninit(0x30, &[&buf.0], out),
+        }
+    }
+
+    #[inline(always)]
+    ///Encodes [Tlv] as TLV value writing inside `out`, if it can fit.
+    ///
+    ///On success returns number of bytes written, otherwise 0, indicating insufficient buffer
+    pub const fn encode(&self, out: &mut [u8]) -> usize {
+        let out = unsafe {
+            slice::from_raw_parts_mut(out.as_mut_ptr() as _, out.len())
+        };
+        self.encode_uninit(out)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 ///Reference to TLV payload
 pub struct TlvsSlice<'a>(&'a [u8]);
@@ -279,7 +418,7 @@ impl<'a> Iterator for TlvsIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         while self.buf.len() > self.offset {
             //TLV always have 3 bytes for type + length
-            let tlv_header = match try_get_aligned_chunk_ref::<[u8; 3]>(self.buf, self.offset) {
+            let tlv_header = match try_get_aligned_chunk_ref::<TlvHeader>(self.buf, self.offset) {
                 Some(header) => header,
                 None => return Some(Err(unlikely(TlvError::new_malformed(self.offset))))
             };
@@ -327,7 +466,7 @@ impl<'a> Iterator for TlvsIter<'a> {
                 //PP2_TYPE_SSL
                 0x20 => {
                     //You need at lest client(u8) and verify(u32) fields for correct ssl info
-                    if tlv_value.len() < 5 {
+                    if tlv_value.len() < TlvSslInfo::HEADER_LEN {
                         return Some(Err(unlikely(TlvError::new_malformed(tlv_value_offset))))
                     } else {
                         let client: SslClient = *get_aligned_chunk_ref(tlv_value, 0);
