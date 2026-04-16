@@ -1,4 +1,4 @@
-//![HAProxy protocol](https://www.haproxy.org/download/3.3/doc/proxy-protocol.txt) implementation.
+//![HAProxy protocol](https://www.haproxy.org/download/3.4/doc/proxy-protocol.txt) implementation.
 
 #![no_std]
 #![warn(missing_docs)]
