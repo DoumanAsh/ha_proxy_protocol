@@ -259,7 +259,7 @@ fn should_parse_tlv_alpn_version2() {
     let expected_alpn = "http/1.1";
 
     let input = build_base_proxy_version2(&[(0x04, [0, 0, 0].as_slice()), (0x04, [0, 0, 0].as_slice()), (0x01, expected_alpn.as_bytes())]);
-    let (_, tlv) = v2::parse(&input).expect("to parse");
+    let (proxy, tlv) = v2::parse(&input).expect("to parse");
     let tlv = tlv.expect("TLS should be present");
     let tlv_raw = tlv.raw();
     let mut tlv_iter = tlv.iter();
@@ -282,6 +282,18 @@ fn should_parse_tlv_alpn_version2() {
         },
         unexpected => panic!("Expected Alpn but got {unexpected:?}"),
     }
+
+    //Ensure we can encode it correctly
+    let proxy_info = proxy.info.unwrap();
+    assert_eq!(proxy_info.encode_with_tlv(v2::TransportProtocol::Datagram, &mut encoded_buffer, [alpn].into_iter()), proxy_info.required_buffer_size() + alpn.required_buffer_size());
+    let (encoded_proxy, encoded_tlv) = v2::parse(&encoded_buffer[..proxy_info.required_buffer_size() + alpn.required_buffer_size()]).expect("to parse");
+    assert_eq!(encoded_proxy.protocol, v2::TransportProtocol::Datagram);
+    assert_eq!(encoded_proxy.info, Some(proxy_info));
+    let encoded_tlv = encoded_tlv.expect("to have tlv");
+    let mut encoded_tlvs = encoded_tlv.iter();
+    let encoded_tlv = encoded_tlvs.next().expect("to have tlv").expect("to parse tlv");
+    assert!(encoded_tlvs.next().is_none());
+    assert_eq!(encoded_tlv, alpn);
 }
 
 #[test]
@@ -289,7 +301,7 @@ fn should_parse_tlv_authority_version2() {
     let expected_authority = "test.com";
 
     let input = build_base_proxy_version2(&[(0x04, [0, 0, 0].as_slice()), (0x02, expected_authority.as_bytes())]);
-    let (_, tlv) = v2::parse(&input).expect("to parse");
+    let (proxy, tlv) = v2::parse(&input).expect("to parse");
     let tlv = tlv.expect("TLS should be present");
     let tlv_raw = tlv.raw();
     let mut tlv_iter = tlv.iter();
@@ -312,6 +324,18 @@ fn should_parse_tlv_authority_version2() {
         },
         unexpected => panic!("Expected Authority but got {unexpected:?}"),
     }
+
+    //Ensure we can encode it correctly
+    let proxy_info = proxy.info.unwrap();
+    assert_eq!(proxy_info.encode_with_tlv(v2::TransportProtocol::Datagram, &mut encoded_buffer, [tlv].into_iter()), proxy_info.required_buffer_size() + tlv.required_buffer_size());
+    let (encoded_proxy, encoded_tlv) = v2::parse(&encoded_buffer[..proxy_info.required_buffer_size() + tlv.required_buffer_size()]).expect("to parse");
+    assert_eq!(encoded_proxy.protocol, v2::TransportProtocol::Datagram);
+    assert_eq!(encoded_proxy.info, Some(proxy_info));
+    let encoded_tlv = encoded_tlv.expect("to have tlv");
+    let mut encoded_tlvs = encoded_tlv.iter();
+    let encoded_tlv = encoded_tlvs.next().expect("to have tlv").expect("to parse tlv");
+    assert!(encoded_tlvs.next().is_none());
+    assert_eq!(encoded_tlv, tlv);
 }
 
 #[test]
@@ -319,7 +343,7 @@ fn should_parse_tlv_unique_id_version2() {
     let expected_unique_id = b"123451234659";
 
     let input = build_base_proxy_version2(&[(0x04, [0, 0, 0].as_slice()), (0x05, expected_unique_id.as_slice())]);
-    let (_, tlv) = v2::parse(&input).expect("to parse");
+    let (proxy, tlv) = v2::parse(&input).expect("to parse");
     let tlv = tlv.expect("TLS should be present");
     let tlv_raw = tlv.raw();
     let mut tlv_iter = tlv.iter();
@@ -341,6 +365,18 @@ fn should_parse_tlv_unique_id_version2() {
         },
         unexpected => panic!("Expected unique id but got {unexpected:?}"),
     }
+
+    //Ensure we can encode it correctly
+    let proxy_info = proxy.info.unwrap();
+    assert_eq!(proxy_info.encode_with_tlv(v2::TransportProtocol::Datagram, &mut encoded_buffer, [tlv].into_iter()), proxy_info.required_buffer_size() + tlv.required_buffer_size());
+    let (encoded_proxy, encoded_tlv) = v2::parse(&encoded_buffer[..proxy_info.required_buffer_size() + tlv.required_buffer_size()]).expect("to parse");
+    assert_eq!(encoded_proxy.protocol, v2::TransportProtocol::Datagram);
+    assert_eq!(encoded_proxy.info, Some(proxy_info));
+    let encoded_tlv = encoded_tlv.expect("to have tlv");
+    let mut encoded_tlvs = encoded_tlv.iter();
+    let encoded_tlv = encoded_tlvs.next().expect("to have tlv").expect("to parse tlv");
+    assert!(encoded_tlvs.next().is_none());
+    assert_eq!(encoded_tlv, tlv);
 }
 
 #[test]
@@ -348,7 +384,7 @@ fn should_parse_tlv_netns_version2() {
     let expected_netns = "netns/example";
 
     let input = build_base_proxy_version2(&[(0x04, [0, 0, 0].as_slice()), (0x30, expected_netns.as_bytes())]);
-    let (_, tlv) = v2::parse(&input).expect("to parse");
+    let (proxy, tlv) = v2::parse(&input).expect("to parse");
     let tlv = tlv.expect("TLS should be present");
     let tlv_raw = tlv.raw();
     let mut tlv_iter = tlv.iter();
@@ -371,6 +407,18 @@ fn should_parse_tlv_netns_version2() {
         },
         unexpected => panic!("Expected Netns but got {unexpected:?}"),
     }
+
+    //Ensure we can encode it correctly
+    let proxy_info = proxy.info.unwrap();
+    assert_eq!(proxy_info.encode_with_tlv(v2::TransportProtocol::Datagram, &mut encoded_buffer, [tlv].into_iter()), proxy_info.required_buffer_size() + tlv.required_buffer_size());
+    let (encoded_proxy, encoded_tlv) = v2::parse(&encoded_buffer[..proxy_info.required_buffer_size() + tlv.required_buffer_size()]).expect("to parse");
+    assert_eq!(encoded_proxy.protocol, v2::TransportProtocol::Datagram);
+    assert_eq!(encoded_proxy.info, Some(proxy_info));
+    let encoded_tlv = encoded_tlv.expect("to have tlv");
+    let mut encoded_tlvs = encoded_tlv.iter();
+    let encoded_tlv = encoded_tlvs.next().expect("to have tlv").expect("to parse tlv");
+    assert!(encoded_tlvs.next().is_none());
+    assert_eq!(encoded_tlv, tlv);
 }
 
 #[test]
@@ -402,7 +450,7 @@ fn should_parse_tlv_ssl_version2() {
     }
 
     let input = build_base_proxy_version2(&[(0x04, [0, 0, 0].as_slice()), (0x20, expected_ssl.as_slice())]);
-    let (_, tlv) = v2::parse(&input).expect("to parse");
+    let (proxy, tlv) = v2::parse(&input).expect("to parse");
     let tlv = tlv.expect("TLS should be present");
     let tlv_payload = tlv.raw();
     assert_eq!(tlv_payload.len(), 88);
@@ -423,8 +471,8 @@ fn should_parse_tlv_ssl_version2() {
     assert_eq!(sufficient_buffer[..82], tlv_payload[6..]);
 
     let mut tlv_ssl_payload_len = 0;
-    match tlv {
-        tlv::Tlv::Ssl(info) => {
+    let tlv_ssl = match tlv {
+        tlv_ssl @ tlv::Tlv::Ssl(info) => {
             assert!(info.client.is_ssl());
             assert!(info.client.is_cert_conn());
             assert!(!info.client.is_cert_session());
@@ -468,12 +516,26 @@ fn should_parse_tlv_ssl_version2() {
                 tlv_ssl_payload_len += tlv_len;
                 assert_eq!(tlv_len, buffer_len + 3);
             } //for tlv
+
+            tlv_ssl
         },
         unexpected => panic!("Expected SslInfo but got {unexpected:?}"),
-    } // match tlv
+    }; // match tlv
 
     // payload + header(3) + SSL sub-tlv header(5)
     assert_eq!(tlv_len, tlv_ssl_payload_len + 8);
+    let proxy_info = proxy.info.expect("to have proxy_info");
+
+    //Ensure we can encode it correctly
+    assert_eq!(proxy_info.encode_with_tlv(v2::TransportProtocol::Datagram, &mut sufficient_buffer, [tlv_ssl].into_iter()), proxy_info.required_buffer_size() + tlv_ssl.required_buffer_size());
+    let (proxy, tlv) = v2::parse(&sufficient_buffer[..proxy_info.required_buffer_size() + tlv_ssl.required_buffer_size()]).expect("to parse");
+    assert_eq!(proxy.protocol, v2::TransportProtocol::Datagram);
+    assert_eq!(proxy.info, Some(proxy_info));
+    let tlv = tlv.expect("to have tlv");
+    let mut tlvs = tlv.iter();
+    let encoded_tlv_ssl = tlvs.next().expect("to have tlv").expect("to parse tlv");
+    assert!(tlvs.next().is_none());
+    assert_eq!(encoded_tlv_ssl, tlv_ssl);
 }
 
 #[test]

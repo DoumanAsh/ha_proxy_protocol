@@ -119,8 +119,10 @@ impl Proxy {
 
     ///Attempts to encode [Proxy] into `out` returning number of bytes written.
     ///
+    ///All `tlvs` will be attempted to be written in addition to the [Proxy] payload
+    ///
     ///Returns `0` if `out` buffer has insufficient size
-    pub fn encode_uninit(&self, transport: TransportProtocol, out: &mut [mem::MaybeUninit<u8>]) -> usize {
+    pub fn encode_uninit_with_tlv<'a>(&self, transport: TransportProtocol, out: &mut [mem::MaybeUninit<u8>], tlvs: impl Iterator<Item = tlv::Tlv<'a>>) -> usize {
         macro_rules! write_signature {
             ($out:ident) => {
                 unsafe {
@@ -163,11 +165,11 @@ impl Proxy {
             SIG.len() + HEADER_LEN
         }
 
-        match (self.src, self.dst) {
+        let (family, mut len) = match (self.src, self.dst) {
             (Addr::Unix(src), Addr::Unix(dst)) => {
                 let len = 232;
                 if out.len() < len {
-                    0
+                    return 0
                 } else {
                     let family = match transport {
                         TransportProtocol::Stream => 0x31,
@@ -175,19 +177,17 @@ impl Proxy {
                         TransportProtocol::Unknown => return encode_local(out),
                     };
 
-                    write_signature!(out);
-                    write_header!(out, 0x21, family, (len - SIG.len() - HEADER_LEN) as u16);
                     unsafe {
                         ptr::copy_nonoverlapping(src.raw().as_ptr(), out.as_mut_ptr().add(SIG.len() + HEADER_LEN) as _, src.raw().len());
                         ptr::copy_nonoverlapping(dst.raw().as_ptr(), out.as_mut_ptr().add(SIG.len() + HEADER_LEN + src.raw().len()) as _, dst.raw().len());
                     }
-                    len
+                    (family, len)
                 }
             },
             (Addr::Inet(net::SocketAddr::V4(src)), Addr::Inet(net::SocketAddr::V4(dst))) => {
                 let len = 28;
                 if out.len() < len {
-                    0
+                    return 0
                 } else {
                     let family = match transport {
                         TransportProtocol::Stream => 0x11,
@@ -195,18 +195,15 @@ impl Proxy {
                         TransportProtocol::Unknown => return encode_local(out),
                     };
 
-                    write_signature!(out);
-                    write_header!(out, 0x21, family, (len - SIG.len() - HEADER_LEN) as u16);
                     write_inet!(src, dst);
-
-                    len
+                    (family, len)
                 }
 
             },
             (Addr::Inet(net::SocketAddr::V6(src)), Addr::Inet(net::SocketAddr::V6(dst))) => {
                 let len = 52;
                 if out.len() < len {
-                    0
+                    return 0
                 } else {
                     let family = match transport {
                         TransportProtocol::Stream => 0x21,
@@ -214,19 +211,50 @@ impl Proxy {
                         TransportProtocol::Unknown => return encode_local(out),
                     };
 
-                    write_signature!(out);
-                    write_header!(out, 0x21, family, (len - SIG.len() - HEADER_LEN) as u16);
                     write_inet!(src, dst);
-
-                    len
+                    (family, len)
                 }
 
             },
             #[cfg(debug_assertions)]
             _ => panic!("Mismatch between src and "),
             #[cfg(not(debug_assertions))]
-            _ => 0,
+            _ => return 0,
+        }; // match src
+
+        for tlv in tlvs {
+            let written = tlv.encode_uninit(&mut out[len..]);
+            if written == 0 {
+                return 0;
+            }
+
+            len += written;
         }
+
+        write_signature!(out);
+        write_header!(out, 0x21, family, (len - SIG.len() - HEADER_LEN) as u16);
+        len
+    }
+
+    #[inline(always)]
+    ///Attempts to encode [Proxy] into `out` returning number of bytes written.
+    ///
+    ///Returns `0` if `out` buffer has insufficient size
+    pub fn encode_uninit(&self, transport: TransportProtocol, out: &mut [mem::MaybeUninit<u8>]) -> usize {
+        self.encode_uninit_with_tlv(transport, out, [].into_iter())
+    }
+
+    #[inline]
+    ///Attempts to encode [Proxy] into `out` returning number of bytes written.
+    ///
+    ///All `tlvs` will be attempted to be written in addition to the [Proxy] payload
+    ///
+    ///Returns `0` if `out` buffer has insufficient size
+    pub fn encode_with_tlv<'a>(&self, transport: TransportProtocol, out: &mut [u8], tlvs: impl Iterator<Item = tlv::Tlv<'a>>) -> usize {
+        let out = unsafe {
+            core::slice::from_raw_parts_mut(out.as_mut_ptr() as _, out.len())
+        };
+        self.encode_uninit_with_tlv(transport, out, tlvs)
     }
 
     #[inline]
@@ -237,7 +265,7 @@ impl Proxy {
         let out = unsafe {
             core::slice::from_raw_parts_mut(out.as_mut_ptr() as _, out.len())
         };
-        self.encode_uninit(transport, out)
+        self.encode_uninit_with_tlv(transport, out, [].into_iter())
     }
 }
 
