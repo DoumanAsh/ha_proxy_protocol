@@ -14,6 +14,8 @@ pub use error::ParseError;
 pub mod v1;
 pub mod v2;
 pub mod tlv;
+mod buffer;
+pub use buffer::Buffer;
 
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -176,6 +178,14 @@ pub enum ProxyParseResult<'a> {
 }
 
 impl ProxyParseResult<'_> {
+    ///Returns number of bytes consumed to parse
+    pub const fn len(&self) -> usize {
+        match self {
+            Self::V1(result) => result.len,
+            Self::V2(result, _) => result.len,
+        }
+    }
+
     #[inline(always)]
     ///Extract proxy parsing result into generic result
     pub fn into_generic(self) -> (Option<v2::Proxy>, usize) {

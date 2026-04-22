@@ -96,6 +96,10 @@ pub struct Proxy {
 }
 
 impl Proxy {
+    ///Max required length to hold [Proxy]
+    pub const MAX_LEN: usize = 232;
+    ///Max required length to hold [Proxy] with IP addresses only
+    pub const MAX_IP_LEN: usize = 57;
     #[inline]
     ///Returns required buffer size to hold [Proxy] encoded in proxy version 2 without TLV
     ///
@@ -104,7 +108,7 @@ impl Proxy {
         match self.src {
             Addr::Unix(_) => {
                 debug_assert!(matches!(self.dst, Addr::Unix(_)));
-                232
+                Self::MAX_LEN
             },
             Addr::Inet(net::SocketAddr::V4(_)) => {
                 debug_assert!(matches!(self.dst, Addr::Inet(net::SocketAddr::V4(_))));
@@ -112,7 +116,7 @@ impl Proxy {
             },
             Addr::Inet(net::SocketAddr::V6(_)) => {
                 debug_assert!(matches!(self.dst, Addr::Inet(net::SocketAddr::V6(_))));
-                57
+                Self::MAX_IP_LEN
             },
         }
     }

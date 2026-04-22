@@ -22,6 +22,8 @@ pub struct Proxy {
 }
 
 impl Proxy {
+    ///Max required length to hold [Proxy]
+    pub const MAX_LEN: usize = 104;
     ///Returns required buffer size to hold [Proxy] encoded in proxy version 1
     ///
     ///In debug build it asserts that [Proxy] is constructed correctly (i.e. src and dst are the same type of address)
@@ -31,7 +33,7 @@ impl Proxy {
             56
         } else {
             debug_assert!(self.dst.is_ipv6());
-            104
+            Self::MAX_LEN
         }
     }
 }

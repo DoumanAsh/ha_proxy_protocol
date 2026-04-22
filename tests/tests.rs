@@ -1,7 +1,7 @@
 use core::net;
 
 use ha_proxy_protocol::{v1, v2, tlv, parse};
-use ha_proxy_protocol::{UnixAddr, ParseError, ProxyParseResult};
+use ha_proxy_protocol::{UnixAddr, ParseError, ProxyParseResult, Buffer};
 
 fn create_v4_addr(a: u8, b: u8, c: u8, d: u8, port: u16) -> net::SocketAddr {
     net::SocketAddrV4::new(net::Ipv4Addr::new(a, b, c, d), port).into()
@@ -29,7 +29,10 @@ fn should_parse_valid_version1() {
         ("PROXY TCP6 ::1 ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff 80 65535\r\n", v1::Proxy { src: create_v6_addr("::1", 80), dst: create_v6_addr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 65535)  }),
     ];
 
+    let mut buffer = Buffer::new_v1();
     for (input, expected_info) in inputs {
+        assert_eq!(buffer.extend_from_slice(input.as_bytes()), input.len());
+
         let result = match parse(input.as_bytes()) {
             Ok(result) => result,
             Err(error) => panic!("Should parse '{input:?}' but got error: {error}"),
@@ -43,6 +46,13 @@ fn should_parse_valid_version1() {
         assert_eq!(result.info.unwrap(), expected_info, "Expected {expected_info:#?} but got {info:#?}");
         //Check fmt without line ending
         assert_eq!(input[..input.len()-2], expected_info.to_string());
+
+        let v1_result = buffer.parse_v1().expect("to parse v1");
+        assert_eq!(result, v1_result);
+
+        assert_eq!(buffer.as_slice().len(), 0);
+
+        buffer.clear();
     }
 }
 
@@ -101,11 +111,18 @@ fn should_handle_error_version1() {
         ("PROXGGGGGG", ParseError::InvalidProxySig),
     ];
 
+    let mut buffer = Buffer::new_v1();
     for (input, expected_error) in inputs {
-        match v1::parse(input.as_bytes()) {
+        assert_eq!(buffer.extend_from_slice(input.as_bytes()), input.len());
+
+        match buffer.parse_v1() {
             Ok(result) => panic!("Should not parse {input:?}, but successfully got {result:?}"),
             Err(error) => assert_eq!(error, expected_error, "{input:?} should return {expected_error} but got {error}"),
         };
+
+        //error will not reset buffer as we cannot know when to finish
+        assert_eq!(buffer.as_slice(), input.as_bytes());
+        buffer.clear();
     }
 }
 
@@ -172,8 +189,11 @@ fn should_parse_valid_version2() {
         (unix_datagram.as_slice(), v2::TransportProtocol::Datagram, v2::Proxy { src: src_path.into(), dst: dst_path.into()  }),
     ];
 
+    let mut buffer = Buffer::new_v2();
     let mut temp_buf = [0; 256];
     for (input, expected_transport, expected_info) in inputs {
+        assert_eq!(buffer.extend_from_slice(input), input.len());
+
         let result = match parse(input) {
             Ok(result) => result,
             Err(error) => panic!("Should parse '{input:?}' but got error: {error}"),
@@ -193,6 +213,12 @@ fn should_parse_valid_version2() {
         let len = info.encode(expected_transport, &mut temp_buf);
         assert_eq!(result.len, len);
         assert_eq!(temp_buf[..len], *input, "Encoding should producing equivalent output to input: {expected_transport:?} {expected_info:#?}");
+
+        let (v2_proxy, tlv) = buffer.parse_v2().expect("to parse v2");
+        assert!(tlv.is_none());
+        assert_eq!(v2_proxy, result);
+
+        buffer.clear();
     }
 }
 
@@ -218,11 +244,17 @@ fn should_parse_invalid_version2() {
         (wrong_family_v6.as_slice(), ParseError::InvalidTransportSize)
     ];
 
+    let mut buffer = Buffer::new_v2_ip();
     for (input, expected_error) in inputs {
-        match v2::parse(input) {
+        assert_eq!(buffer.extend_from_slice(input), input.len());
+
+        match buffer.parse_v2() {
             Ok(result) => panic!("Should fail to parse '{input:?}' but got success: {result:#?}"),
             Err(error) => assert_eq!(error, expected_error),
         }
+
+        assert_eq!(buffer.as_slice(), input);
+        buffer.clear();
     }
 }
 
