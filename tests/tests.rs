@@ -579,3 +579,22 @@ fn should_parse_tlv_noop_version2() {
     let missing = tlv_iter.next();
     assert!(missing.is_none(), "No more TLV should be after NOOP, but got {missing:?}");
 }
+
+#[test]
+fn should_verify_buffer_after_parse() {
+    let input = "PROXY TCP4 255.255.255.255 255.255.255.255 65535 65535\r\nHEAD / HTTP/1.1\r\nHost: host:port\r\nConnection: close\r\n\r\n";
+    let expected_proxy = v1::Proxy { src: create_v4_addr(255, 255, 255, 255, 65535), dst: create_v4_addr(255, 255, 255, 255, 65535)  };
+
+    let mut buffer = Buffer::<256>::new();
+    assert_eq!(buffer.extend_from_slice(input.as_bytes()), input.len());
+
+    let proxy = buffer.parse_v1().expect("to parse v1");
+    let proxy = proxy.info.unwrap();
+    assert_eq!(proxy, expected_proxy);
+
+    let remaining = core::str::from_utf8(buffer.as_slice()).expect("valid utf-8");
+    assert_eq!(remaining, "HEAD / HTTP/1.1\r\nHost: host:port\r\nConnection: close\r\n\r\n");
+
+    buffer.clear();
+    assert!(buffer.as_slice().is_empty());
+}
