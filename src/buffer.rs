@@ -67,7 +67,7 @@ impl<const N: usize> Buffer<N> {
     #[inline(always)]
     ///Return spare capacity size
     pub const fn remaining(&self) -> usize {
-        N - self.len as usize
+        N - (self.offset + self.len) as usize
     }
 
     #[inline(always)]
@@ -95,8 +95,9 @@ impl<const N: usize> Buffer<N> {
     #[inline(always)]
     ///Returns unwritten part of the buffer
     pub const fn spare_capacity_mut(&mut self) -> &mut [mem::MaybeUninit<u8>] {
+        let offset = self.offset + self.len;
         unsafe {
-            slice::from_raw_parts_mut(self.inner.as_mut_ptr().add(self.len as _), self.remaining() as _)
+            slice::from_raw_parts_mut(self.inner.as_mut_ptr().add(offset as _), N - offset as usize)
         }
     }
 
@@ -129,11 +130,12 @@ impl<const N: usize> Buffer<N> {
     ///If `0` is returned then you exceeded buffer capacity and no longer able to write unless you clear buffer
     pub const fn extend_from_slice(&mut self, src: &[u8]) -> usize {
         let mut len = src.len();
-        if self.remaining() < len {
-            len = self.remaining();
+        let spare_capacity_mut = self.spare_capacity_mut();
+        if spare_capacity_mut.len() < len {
+            len = spare_capacity_mut.len();
         }
         unsafe {
-            ptr::copy_nonoverlapping(src.as_ptr(), self.inner.as_mut_ptr().add(self.len as _) as _, len);
+            ptr::copy_nonoverlapping(src.as_ptr(), spare_capacity_mut.as_mut_ptr() as _, len);
         }
         self.len = self.len + len as u16;
 

@@ -595,6 +595,10 @@ fn should_verify_buffer_after_parse() {
     let remaining = core::str::from_utf8(buffer.as_slice()).expect("valid utf-8");
     assert_eq!(remaining, "HEAD / HTTP/1.1\r\nHost: host:port\r\nConnection: close\r\n\r\n");
 
+    assert_eq!(buffer.extend_from_slice("TEST".as_bytes()), 4);
+    let remaining = core::str::from_utf8(buffer.as_slice()).expect("valid utf-8");
+    assert_eq!(remaining, "HEAD / HTTP/1.1\r\nHost: host:port\r\nConnection: close\r\n\r\nTEST");
+
     buffer.clear();
     assert!(buffer.as_slice().is_empty());
 }
